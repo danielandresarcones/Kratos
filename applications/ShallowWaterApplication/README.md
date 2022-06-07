@@ -1,6 +1,6 @@
 ## Shallow water application
 
-This is a research application that provides a set of tools for oceanographic and hydrographic simulations over shallow domains. The basis of the stabilization method is explained in [^1].
+This is a research application that provides a set of tools for oceanographic and hydrographic simulations over shallow domains. The background of the stabilization method is explained in [^1].
 
 ### Implemented models
 
