@@ -16,7 +16,7 @@ This application does not have other application dependencies at compile time. T
   - `scipy` is used by the wave generator and by the benchmarks
   - `numpy` is used to generate solitary waves and analytical solutions by the benchmarks
 
-If the coupling with a Navier-Stokes is required [^2], add the following applications to compilation:
+If the coupling with the Navier-Stokes equations is required [^2], add the following applications to compilation:
   - [HDF5Application](../HDF5Application/README.md)
   - [MappingApplication](../MappingApplication/README.md)
   - [PfemFluidDynamicsApplication](../PfemFluidDynamicsApplication/README.md)
