@@ -126,6 +126,12 @@ public:
         this->AssignSettings(this_parameters_copy);
     }
 
+    explicit ROMBuilderAndSolver(
+        typename TLinearSolver::Pointer pNewLinearSystemSolver)
+        : BuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver>(pNewLinearSystemSolver)
+    {
+    }
+
     ~ROMBuilderAndSolver() = default;
 
     ///@}
@@ -223,7 +229,7 @@ public:
 
     SizeType GetNumberOfROMModes() const noexcept
     {
-        return mNumberOfRomModesLSPG;
+        return mNumberOfRomModes;
     } 
 
     void ProjectToFineBasis(
@@ -400,7 +406,7 @@ protected:
 
         // Set member variables
         mNodalDofs = ThisParameters["nodal_unknowns"].size();
-        mNumberOfRomModesLSPG = ThisParameters["number_of_rom_dofs"].GetInt();
+        mNumberOfRomModes = ThisParameters["number_of_rom_dofs"].GetInt();
 
         // Set up a map with key the variable key and value the correct row in ROM basis
         IndexType k = 0;
@@ -718,7 +724,7 @@ protected:
 
 private:
 
-    SizeType mNumberOfRomModesLSPG;
+    SizeType mNumberOfRomModes;
 
     ///@}
     ///@name Private operations 

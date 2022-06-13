@@ -32,6 +32,7 @@
 /* Application includes */
 #include "rom_application_variables.h"
 #include "custom_utilities/rom_auxiliary_utilities.h"
+#include "custom_utilities/rom_residuals_utility.h"
 
 namespace Kratos
 {
@@ -87,7 +88,7 @@ public:
     typedef LSPGROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver> ClassType;
 
     /// Definition of the classes from the base class
-    typedef BuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver> BaseType;
+    typedef ROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver> BaseType;
     typedef typename BaseType::TSchemeType TSchemeType;
     typedef typename BaseType::DofsArrayType DofsArrayType;
     typedef typename BaseType::TSystemMatrixType TSystemMatrixType;
@@ -98,6 +99,9 @@ public:
     typedef typename BaseType::TSystemVectorPointerType TSystemVectorPointerType;
     typedef typename BaseType::ElementsArrayType ElementsArrayType;
     typedef typename BaseType::ConditionsArrayType ConditionsArrayType;
+
+    /// Definition of the classes from the ROM base class
+    // typedef ROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver> ROMBuilderAndSolverType;
 
     /// Additional definitions
     typedef typename ModelPart::MasterSlaveConstraintContainerType MasterSlaveConstraintContainerType;
@@ -126,14 +130,13 @@ public:
 
     explicit LSPGROMBuilderAndSolver(
         typename TLinearSolver::Pointer pNewLinearSystemSolver,
-        Parameters ThisParameters)
-        : ROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver>(pNewLinearSystemSolver, ThisParameters) 
+        Parameters ThisParameters) : BaseType(pNewLinearSystemSolver) 
     {
         // Validate and assign defaults
-        // Parameters this_parameters_copy = ThisParameters.Clone();
-        // this_parameters_copy = this->ValidateAndAssignParameters(this_parameters_copy, this->GetDefaultParameters());
-        // this->AssignSettings(this_parameters_copy);
-    }
+        Parameters this_parameters_copy = ThisParameters.Clone();
+        this_parameters_copy = this->ValidateAndAssignParameters(this_parameters_copy, this->GetDefaultParameters());
+        this->AssignSettings(this_parameters_copy);
+    } 
 
     ~LSPGROMBuilderAndSolver() = default;
 
@@ -204,6 +207,13 @@ public:
         LSPGSystemMatrixType Arom = ZeroMatrix(BaseType::GetEquationSystemSize(), this->GetNumberOfROMModes());
         LSPGSystemVectorType brom = ZeroVector(BaseType::GetEquationSystemSize());
         BuildROM(pScheme, rModelPart, Arom, brom);
+
+        // Obtain the assembled residuals vector (To build a basis for Petrov-Galerkin)
+        if (mTrainPetrovGalerkinFlag){
+            Kratos::Vector r_residual;
+            GetAssembledResiduals(pScheme, rModelPart, r_residual);
+        }
+
         SolveROM(rModelPart, Arom, brom, Dx);
 
 
@@ -216,7 +226,8 @@ public:
         {
             "name" : "lspg_rom_builder_and_solver",
             "nodal_unknowns" : [],
-            "number_of_rom_dofs" : 10
+            "number_of_rom_dofs" : 10,
+            "train_petrov_galerkin" : false
         })");
         default_parameters.AddMissingParameters(BaseType::GetDefaultParameters());
 
@@ -267,6 +278,10 @@ public:
 
     ///@}
 protected:
+
+    SizeType mNodalDofs;
+    bool mTrainPetrovGalerkinFlag = false;
+
     ///@}
     ///@name Protected static member variables
     ///@{
@@ -284,6 +299,14 @@ protected:
     ///@}
     ///@name Protected operations
     ///@{
+
+    void AssignSettings(const Parameters ThisParameters) override
+    {
+        BaseType::AssignSettings(ThisParameters);
+
+        // // Set member variables
+        mTrainPetrovGalerkinFlag = ThisParameters["train_petrov_galerkin"].GetBool();
+    }
 
     /**
     * Thread Local Storage containing dynamically allocated structures to avoid reallocating each iteration.
@@ -395,6 +418,56 @@ protected:
         KRATOS_CATCH("")
     }
 
+    /**
+     * Builds the reduced system of equations on rank 0 
+     */
+    void GetAssembledResiduals(
+        typename TSchemeType::Pointer pScheme,
+        ModelPart &rModelPart,
+        LSPGSystemVectorType &rb) 
+    {
+        KRATOS_TRY
+        const auto residual_writing_timer = BuiltinTimer();
+        // Define a dense matrix to hold the reduced problem
+        rb = ZeroVector(BaseType::GetEquationSystemSize());
+
+        // Build the system matrix by looping over elements and conditions and assembling to A
+        KRATOS_ERROR_IF(!pScheme) << "No scheme provided!" << std::endl;
+
+        // Get ProcessInfo from main model part
+        const auto& r_current_process_info = rModelPart.GetProcessInfo();
+
+        AssemblyTLS assembly_tls_container;
+
+        auto& elements = rModelPart.Elements();
+        if(!elements.empty())
+        {
+            block_for_each(elements, assembly_tls_container, 
+                [&](Element& r_element, AssemblyTLS& r_thread_prealloc)
+            {
+                CalculateAssembledResiduals(r_element, rb, r_thread_prealloc, *pScheme, r_current_process_info);
+            });
+        }
+
+
+        auto& conditions = rModelPart.Conditions();
+        if(!conditions.empty())
+        {
+            block_for_each(conditions, assembly_tls_container, 
+                [&](Condition& r_condition, AssemblyTLS& r_thread_prealloc)
+            {
+                CalculateAssembledResiduals(r_condition, rb, r_thread_prealloc, *pScheme, r_current_process_info);
+            });
+        }
+
+        std::stringstream matrix_market_vector_name;
+        matrix_market_vector_name << "R_" << rModelPart.GetProcessInfo()[TIME] << "_" << rModelPart.GetProcessInfo()[NL_ITERATION_NUMBER] <<  ".res.mm";
+        SparseSpaceType::WriteMatrixMarketVector((matrix_market_vector_name.str()).c_str(), rb);
+
+        KRATOS_INFO_IF("LSPGROMBuilderAndSolver", (this->GetEchoLevel() > 0)) << "Write residuals to train Petrov Galerkin time: " << residual_writing_timer.ElapsedSeconds() << std::endl;
+        KRATOS_CATCH("")
+    }
+
     ///@}
     ///@name Protected access
     ///@{
@@ -410,6 +483,9 @@ protected:
     ///@{
     
 private:
+
+    SizeType mNumberOfRomModes;
+
     ///@}
     ///@name Private operations 
     ///@{
@@ -461,6 +537,39 @@ private:
             }
         }
     }
+
+    /**
+     * Computes the global assembled residual 
+     */
+    template<typename TEntity>
+    void CalculateAssembledResiduals(
+        TEntity& rEntity,
+        LSPGSystemVectorType& rBglobal,
+        AssemblyTLS& rPreAlloc,
+        TSchemeType& rScheme,
+        const ProcessInfo& rCurrentProcessInfo)
+    {
+        if (rEntity.IsDefined(ACTIVE) && rEntity.IsNot(ACTIVE)) return;
+
+        // Calculate elemental contribution
+        rScheme.CalculateRHSContribution(rEntity, rPreAlloc.romB, rPreAlloc.eq_id, rCurrentProcessInfo);
+        rEntity.GetDofList(rPreAlloc.dofs, rCurrentProcessInfo);
+
+        const SizeType ndofs = rPreAlloc.dofs.size();
+
+        // Assembly
+        for(SizeType row=0; row < ndofs; ++row)
+        {
+            const SizeType global_row = rPreAlloc.eq_id[row];
+
+            if(rPreAlloc.dofs[row]->IsFixed()) continue;
+
+            double& r_bi = rBglobal(global_row);
+            AtomicAdd(r_bi, rPreAlloc.romB[row]);
+        }
+    }
+
+
 
 
     ///@}

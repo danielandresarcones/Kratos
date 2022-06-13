@@ -45,7 +45,8 @@ namespace Kratos
         Parameters default_parameters = Parameters(R"(
         {
             "nodal_unknowns" : [],
-            "number_of_rom_dofs" : 10
+            "number_of_rom_dofs" : 10,
+            "petrov_galerkin_number_of_rom_dofs" : 10
         })" );
 
         ThisParameters.ValidateAndAssignDefaults(default_parameters);
