@@ -61,6 +61,12 @@ void  AddCustomStrategiesToPython(pybind11::module& m)
      py::class_<LSPGROMBuilderAndSolverType, typename LSPGROMBuilderAndSolverType::Pointer, ROMBuilderAndSolverType, BuilderAndSolverType>(m, "LSPGROMBuilderAndSolver")
         .def(py::init< LinearSolverType::Pointer, Parameters>() )
         ;
+    
+    typedef PetrovGalerkinROMBuilderAndSolver<SparseSpaceType, LocalSpaceType, LinearSolverType> PetrovGalerkinROMBuilderAndSolverType;
+
+     py::class_<PetrovGalerkinROMBuilderAndSolverType, typename PetrovGalerkinROMBuilderAndSolverType::Pointer, ROMBuilderAndSolverType, BuilderAndSolverType>(m, "PetrovGalerkinROMBuilderAndSolver")
+        .def(py::init< LinearSolverType::Pointer, Parameters>() )
+        ;
 
 }
 

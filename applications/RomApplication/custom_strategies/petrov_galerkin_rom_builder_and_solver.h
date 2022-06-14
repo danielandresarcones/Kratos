@@ -86,7 +86,7 @@ public:
     typedef PetrovGalerkinROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver> ClassType;
 
     /// Definition of the classes from the base class
-    typedef BuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver> BaseType;
+    typedef ROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver> BaseType;
     typedef typename BaseType::TSchemeType TSchemeType;
     typedef typename BaseType::DofsArrayType DofsArrayType;
     typedef typename BaseType::TSystemMatrixType TSystemMatrixType;
@@ -126,12 +126,12 @@ public:
     explicit PetrovGalerkinROMBuilderAndSolver(
         typename TLinearSolver::Pointer pNewLinearSystemSolver,
         Parameters ThisParameters)
-        : ROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver>(pNewLinearSystemSolver, ThisParameters) 
+        : ROMBuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver>(pNewLinearSystemSolver) 
     {
         // Validate and assign defaults
-        // Parameters this_parameters_copy = ThisParameters.Clone();
-        // this_parameters_copy = this->ValidateAndAssignParameters(this_parameters_copy, this->GetDefaultParameters());
-        // this->AssignSettings(this_parameters_copy);
+        Parameters this_parameters_copy = ThisParameters.Clone();
+        this_parameters_copy = this->ValidateAndAssignParameters(this_parameters_copy, this->GetDefaultParameters());
+        this->AssignSettings(this_parameters_copy);
     }
 
     ~PetrovGalerkinROMBuilderAndSolver() = default;
@@ -200,9 +200,11 @@ public:
         TSystemVectorType &b) override
     {
         KRATOS_TRY
-        PetrovGalerkinSystemMatrixType Arom = ZeroMatrix(BaseType::GetEquationSystemSize(), this->GetNumberOfROMModes());
-        PetrovGalerkinSystemVectorType brom = ZeroVector(BaseType::GetEquationSystemSize());
+        PetrovGalerkinSystemMatrixType Arom = ZeroMatrix(mNumberOfPetrovGalerkinRomModes, this->GetNumberOfROMModes());
+        PetrovGalerkinSystemVectorType brom = ZeroVector(mNumberOfPetrovGalerkinRomModes);
         BuildROM(pScheme, rModelPart, Arom, brom);
+        KRATOS_WATCH(Arom)
+        KRATOS_WATCH(brom)
         SolveROM(rModelPart, Arom, brom, Dx);
 
 
@@ -215,7 +217,8 @@ public:
         {
             "name" : "petrov_galerkin_rom_builder_and_solver",
             "nodal_unknowns" : [],
-            "number_of_rom_dofs" : 10
+            "number_of_rom_dofs" : 10,
+            "petrov_galerkin_number_of_rom_dofs" : 10
         })");
         default_parameters.AddMissingParameters(BaseType::GetDefaultParameters());
 
@@ -275,6 +278,8 @@ protected:
     ///@name Protected member variables
     ///@{
 
+    SizeType mNumberOfPetrovGalerkinRomModes;
+
     ///@}
     ///@name Protected operators
     ///@{
@@ -284,17 +289,76 @@ protected:
     ///@name Protected operations
     ///@{
 
+    void AssignSettings(const Parameters ThisParameters) override
+    {
+        BaseType::AssignSettings(ThisParameters);
+
+        // // Set member variables
+        mNumberOfPetrovGalerkinRomModes = ThisParameters["petrov_galerkin_number_of_rom_dofs"].GetInt();
+    }
+
     /**
     * Thread Local Storage containing dynamically allocated structures to avoid reallocating each iteration.
     */
     struct AssemblyTLS
     {
+        AssemblyTLS(SizeType NRomModes, SizeType NPetrovGalerkinRomModes)
+            : romA(ZeroMatrix(NPetrovGalerkinRomModes, NRomModes)),
+              romB(ZeroVector(NPetrovGalerkinRomModes))
+        { }
+        AssemblyTLS() = delete;
+
         Matrix phiE = {};                // Elemental Phi
+        Matrix psiE = {};                // Elemental Psi
         LocalSystemMatrixType lhs = {};  // Elemental LHS
+        LocalSystemVectorType rhs = {};  // Elemental RHS
         EquationIdVectorType eq_id = {}; // Elemental equation ID vector
         DofsVectorType dofs = {};        // Elemental dof vector
-        RomSystemMatrixType romA;        // reduced LHS
-        RomSystemVectorType romB;        // reduced RHS
+        PetrovGalerkinSystemMatrixType romA;        // reduced LHS
+        PetrovGalerkinSystemVectorType romB;        // reduced RHS
+        RomSystemMatrixType aux = {};    // Auxiliary: romA = psi.t * (LHS * phi) := psi.t * aux
+    };
+
+    /**
+     * Class to sum-reduce matrices and vectors.
+     */
+    template<typename T>
+    struct NonTrivialSumReduction
+    {
+        typedef T value_type;
+        typedef T return_type;
+
+        T mValue;
+        bool mInitialized = false;
+
+        void Init(const value_type& first_value)
+        {
+            mValue = first_value;
+            mInitialized = true;
+        }
+
+        /// access to reduced value
+        return_type GetValue() const
+        {
+            return mValue;
+        }
+
+        void LocalReduce(const value_type& value)
+        {
+            if(!mInitialized) {
+                Init(value);
+            } else {
+                noalias(mValue) += value;
+            }
+        }
+
+        void ThreadSafeReduce(const NonTrivialSumReduction& rOther)
+        {
+            if(!rOther.mInitialized) return;
+
+            const std::lock_guard<LockObject> scope_lock(ParallelUtilities::GetGlobalLock());
+            LocalReduce(rOther.mValue);
+        }
     };
 
     /**
@@ -319,8 +383,8 @@ protected:
     {
         KRATOS_TRY
         // Define a dense matrix to hold the reduced problem
-        rA = ZeroMatrix(BaseType::GetEquationSystemSize(), this->GetNumberOfROMModes());
-        rb = ZeroVector(BaseType::GetEquationSystemSize());
+        rA = ZeroMatrix(mNumberOfPetrovGalerkinRomModes, this->GetNumberOfROMModes());
+        rb = ZeroVector(mNumberOfPetrovGalerkinRomModes);
 
         // Build the system matrix by looping over elements and conditions and assembling to A
         KRATOS_ERROR_IF(!pScheme) << "No scheme provided!" << std::endl;
@@ -332,27 +396,36 @@ protected:
         // Assemble all entities
         const auto assembling_timer = BuiltinTimer();
 
-        AssemblyTLS assembly_tls_container;
+        using SystemSumReducer = CombinedReduction<NonTrivialSumReduction<PetrovGalerkinSystemMatrixType>, NonTrivialSumReduction<PetrovGalerkinSystemVectorType>>;
+        AssemblyTLS assembly_tls_container(this->GetNumberOfROMModes(), mNumberOfPetrovGalerkinRomModes);
 
-        auto& elements = rModelPart.Elements();
+        auto& elements = this->mHromSimulation ? this->mSelectedElements : rModelPart.Elements();
         if(!elements.empty())
         {
-            block_for_each(elements, assembly_tls_container, 
+            std::tie(rA, rb) =
+            block_for_each<SystemSumReducer>(elements, assembly_tls_container, 
                 [&](Element& r_element, AssemblyTLS& r_thread_prealloc)
             {
-                CalculateLocalContributionPetrovGalerkin(r_element, rA, rb, r_thread_prealloc, *pScheme, r_current_process_info);
+                return CalculateLocalContributionPetrovGalerkin(r_element, rA, rb, r_thread_prealloc, *pScheme, r_current_process_info);
             });
         }
 
 
-        auto& conditions = rModelPart.Conditions();
+        auto& conditions = this->mHromSimulation ? this->mSelectedConditions : rModelPart.Conditions();
         if(!conditions.empty())
         {
-            block_for_each(conditions, assembly_tls_container, 
+            PetrovGalerkinSystemMatrixType Aconditions;
+            PetrovGalerkinSystemVectorType bconditions;
+
+            std::tie(Aconditions, bconditions) =
+            block_for_each<SystemSumReducer>(conditions, assembly_tls_container, 
                 [&](Condition& r_condition, AssemblyTLS& r_thread_prealloc)
             {
-                CalculateLocalContributionPetrovGalerkin(r_condition, rA, rb, r_thread_prealloc, *pScheme, r_current_process_info);
+                return CalculateLocalContributionPetrovGalerkin(r_condition, rA, rb, r_thread_prealloc, *pScheme, r_current_process_info);
             });
+
+            rA += Aconditions;
+            rb += bconditions;
         }
 
         KRATOS_INFO_IF("PetrovGalerkinROMBuilderAndSolver", (this->GetEchoLevel() > 0)) << "Build time: " << assembling_timer.ElapsedSeconds() << std::endl;
@@ -372,7 +445,7 @@ protected:
     {
         KRATOS_TRY
 
-        PetrovGalerkinSystemVectorType dxrom(this->GetNumberOfROMModes());
+        RomSystemVectorType dxrom(this->GetNumberOfROMModes());
         
         const auto solving_timer = BuiltinTimer();
         // Calculate the QR decomposition
@@ -417,7 +490,7 @@ private:
      * Computes the local contribution of an element or condition for PetrovGalerkin
      */
     template<typename TEntity>
-    void CalculateLocalContributionPetrovGalerkin(
+    std::tuple<LocalSystemMatrixType, LocalSystemVectorType> CalculateLocalContributionPetrovGalerkin(
         TEntity& rEntity,
         PetrovGalerkinSystemMatrixType& rAglobal,
         PetrovGalerkinSystemVectorType& rBglobal,
@@ -425,40 +498,33 @@ private:
         TSchemeType& rScheme,
         const ProcessInfo& rCurrentProcessInfo)
     {
-        if (rEntity.IsDefined(ACTIVE) && rEntity.IsNot(ACTIVE)) return;
+        if (rEntity.IsDefined(ACTIVE) && rEntity.IsNot(ACTIVE))
+        {
+            rPreAlloc.romA = ZeroMatrix(mNumberOfPetrovGalerkinRomModes, this->GetNumberOfROMModes());
+            rPreAlloc.romB = ZeroVector(mNumberOfPetrovGalerkinRomModes);
+            return std::tie(rPreAlloc.romA, rPreAlloc.romB);
+        }
 
         // Calculate elemental contribution
-        rScheme.CalculateSystemContributions(rEntity, rPreAlloc.lhs, rPreAlloc.romB, rPreAlloc.eq_id, rCurrentProcessInfo);
+        rScheme.CalculateSystemContributions(rEntity, rPreAlloc.lhs, rPreAlloc.rhs, rPreAlloc.eq_id, rCurrentProcessInfo);
         rEntity.GetDofList(rPreAlloc.dofs, rCurrentProcessInfo);
 
         const SizeType ndofs = rPreAlloc.dofs.size();
         ResizeIfNeeded(rPreAlloc.phiE, ndofs, this->GetNumberOfROMModes());
-        ResizeIfNeeded(rPreAlloc.romA, ndofs, this->GetNumberOfROMModes());
+        ResizeIfNeeded(rPreAlloc.psiE, ndofs, mNumberOfPetrovGalerkinRomModes);
+        ResizeIfNeeded(rPreAlloc.aux, ndofs, this->GetNumberOfROMModes());
 
         const auto &r_geom = rEntity.GetGeometry();
         RomAuxiliaryUtilities::GetPhiElemental(rPreAlloc.phiE, rPreAlloc.dofs, r_geom, this->mMapPhi);
+        RomAuxiliaryUtilities::GetPsiElemental(rPreAlloc.psiE, rPreAlloc.dofs, r_geom, this->mMapPhi);
 
-        noalias(rPreAlloc.romA) = prod(rPreAlloc.lhs, rPreAlloc.phiE);
+        const double h_rom_weight = this->mHromSimulation ? rEntity.GetValue(HROM_WEIGHT) : 1.0;
 
+        noalias(rPreAlloc.aux) = prod(rPreAlloc.lhs, rPreAlloc.phiE);
+        noalias(rPreAlloc.romA) = prod(trans(rPreAlloc.psiE), rPreAlloc.aux) * h_rom_weight;
+        noalias(rPreAlloc.romB) = prod(trans(rPreAlloc.psiE), rPreAlloc.rhs) * h_rom_weight;
 
-        // Assembly
-        for(SizeType row=0; row < ndofs; ++row)
-        {
-            const SizeType global_row = rPreAlloc.eq_id[row];
-
-            double& r_bi = rBglobal(global_row);
-            AtomicAdd(r_bi, rPreAlloc.romB[row]);
-
-            if(rPreAlloc.dofs[row]->IsFixed()) continue;
-
-            for(SizeType col=0; col < this->GetNumberOfROMModes(); ++col)
-            {
-                // const SizeType global_col = rPreAlloc.eq_id[col];
-                const SizeType global_col = col;
-                double& r_Aij = rAglobal(global_row, global_col);
-                AtomicAdd(r_Aij, rPreAlloc.romA(row, col));
-            }
-        }
+        return std::tie(rPreAlloc.romA, rPreAlloc.romB);
     }
 
 

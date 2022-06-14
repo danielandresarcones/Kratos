@@ -36,7 +36,7 @@ def CreateRomAnalysisInstance(cls, global_model, parameters):
                 err_msg = "\'run_hrom\' and \'train_hrom\' are both \'true\'. Select either training or running (if training has been already done)."
                 raise Exception(err_msg)
 
-            # Petrov Galerking Trainin settings
+            # Petrov Galerking Training settings
             self.train_petrov_galerkin = self.rom_parameters["train_petrov_galerkin"]["train"].GetBool() if self.rom_parameters.Has("train_petrov_galerkin") else False
             if self.train_hrom and self.train_petrov_galerkin:
                 err_msg = "\'train_petrov_galerkin\' and \'train_hrom\' are both \'true\'. Select only one training strategy."
@@ -46,16 +46,17 @@ def CreateRomAnalysisInstance(cls, global_model, parameters):
                 raise Exception(err_msg)
             
             # ROM solving strategy
-            solving_strategy = self.rom_parameters["solving_strategy"].GetString() if self.rom_parameters.Has("solving_strategy") else "Galerkin"
-            self.project_parameters["solver_settings"].AddString("solving_strategy",solving_strategy)
+            self.solving_strategy = self.rom_parameters["solving_strategy"].GetString() if self.rom_parameters.Has("solving_strategy") else "Galerkin"
+            self.project_parameters["solver_settings"].AddString("solving_strategy",self.solving_strategy)
 
             # Add or remove parameters depending on the solving strategy
             ##LSPG
-            if solving_strategy=="LSPG":
+            if self.solving_strategy=="LSPG":
                 self.project_parameters["solver_settings"]["rom_settings"].AddBool("train_petrov_galerkin", self.train_petrov_galerkin)
-            
             ##Petrov Galerkin
-            if solving_strategy!="Petrov_Galerkin":
+            if self.solving_strategy=="Petrov-Galerkin":
+                self.petrov_galerkin_rom_dofs = self.project_parameters["solver_settings"]["rom_settings"]["petrov_galerkin_number_of_rom_dofs"].GetInt()
+            else:    
                 self.project_parameters["solver_settings"]["rom_settings"].RemoveValue("petrov_galerkin_number_of_rom_dofs")
 
             # Create the ROM solver
@@ -109,7 +110,7 @@ def CreateRomAnalysisInstance(cls, global_model, parameters):
             nodal_dofs = len(self.project_parameters["solver_settings"]["rom_settings"]["nodal_unknowns"].GetStringArray())
             rom_dofs = self.project_parameters["solver_settings"]["rom_settings"]["number_of_rom_dofs"].GetInt()
 
-            # Set the nodal ROM basis
+            # Set the right nodal ROM basis 
             aux = KratosMultiphysics.Matrix(nodal_dofs, rom_dofs)
             for node in computing_model_part.Nodes:
                 node_id = str(node.Id)
@@ -117,6 +118,18 @@ def CreateRomAnalysisInstance(cls, global_model, parameters):
                     for i in range(rom_dofs):
                         aux[j,i] = nodal_modes[node_id][j][i].GetDouble()
                 node.SetValue(KratosROM.ROM_BASIS, aux)
+            
+            # Set the left nodal ROM basis if it is different than the right nodal ROM basis (i.e. Petrov-Galerkin)
+            if (self.solving_strategy == "Petrov-Galerkin"):
+                petrov_galerkin_nodal_modes = self.rom_parameters["petrov_galerkin_nodal_modes"]
+                petrov_galerkin_nodal_dofs = len(self.project_parameters["solver_settings"]["rom_settings"]["nodal_unknowns"].GetStringArray())
+                aux = KratosMultiphysics.Matrix(petrov_galerkin_nodal_dofs, self.petrov_galerkin_rom_dofs)
+                for node in computing_model_part.Nodes:
+                    node_id = str(node.Id)
+                    for j in range(petrov_galerkin_nodal_dofs):
+                        for i in range(self.petrov_galerkin_rom_dofs):
+                            aux[j,i] = petrov_galerkin_nodal_modes[node_id][j][i].GetDouble()
+                    node.SetValue(KratosROM.ROM_LEFT_BASIS, aux)
 
             # Check for HROM stages
             if self.train_hrom:

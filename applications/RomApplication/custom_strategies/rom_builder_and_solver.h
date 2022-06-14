@@ -117,8 +117,7 @@ public:
 
     explicit ROMBuilderAndSolver(
         typename TLinearSolver::Pointer pNewLinearSystemSolver,
-        Parameters ThisParameters)
-        : BuilderAndSolver<TSparseSpace, TDenseSpace, TLinearSolver>(pNewLinearSystemSolver)
+        Parameters ThisParameters): BaseType(pNewLinearSystemSolver)
     {
         // Validate and assign defaults
         Parameters this_parameters_copy = ThisParameters.Clone();

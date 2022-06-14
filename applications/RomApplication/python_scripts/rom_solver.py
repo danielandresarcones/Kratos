@@ -34,7 +34,8 @@ def CreateSolver(cls, model, custom_settings):
             rom_parameters, solving_strategy = self._ValidateAndReturnRomParameters()
             available_solving_strategies = {
                 "Galerkin": KratosROM.ROMBuilderAndSolver, 
-                "LSPG": KratosROM.LSPGROMBuilderAndSolver
+                "LSPG": KratosROM.LSPGROMBuilderAndSolver,
+                "Petrov-Galerkin": KratosROM.PetrovGalerkinROMBuilderAndSolver
             }
             if solving_strategy in available_solving_strategies:
                 return available_solving_strategies[solving_strategy](linear_solver, rom_parameters)

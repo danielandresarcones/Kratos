@@ -148,7 +148,7 @@ class CalculateRomBasisOutputProcess(KratosMultiphysics.OutputProcess):
         # Save the nodal basis
         rom_basis_dict["rom_settings"]["nodal_unknowns"] = [var.Name() for var in self.snapshot_variables_list]
         rom_basis_dict["rom_settings"]["number_of_rom_dofs"] = numpy.shape(u)[1] #TODO: This is way misleading. I'd call it number_of_basis_modes or number_of_rom_modes
-        rom_basis_dict["solving_strategy"] = "Galerkin" # Galerkin: (Phi.T@K@Phi dq= Phi.T@b), LSPG = (K@Phi dq= b)
+        rom_basis_dict["solving_strategy"] = "Galerkin" # Galerkin: (Phi.T@K@Phi dq= Phi.T@b), LSPG = (K@Phi dq= b), Petrov-Galerkin = (Psi.T@K@Phi dq = Psi.T@b)
 
         i = 0
         for node in self.model_part.Nodes:

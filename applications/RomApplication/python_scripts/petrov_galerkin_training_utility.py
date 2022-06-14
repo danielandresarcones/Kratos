@@ -60,11 +60,6 @@ class PetrovGalerkinTrainingUtility(object):
             snapshots_matrix = self.__rom_residuals_utility.GetProjectedGlobalLHS()
         elif self.basis_strategy=="Residuals":
             snapshots_matrix = []
-            current_time = self.__GetPrettyFloat(computing_model_part.ProcessInfo[KratosMultiphysics.TIME])
-            if current_time.is_integer():
-                current_time = int(current_time) #FIXME: I dont like this, c++ writes step with no decimals when is integer and python does. (i.e. c++ step 1=1, python step 1=1.0)
-            number_of_iterations = computing_model_part.ProcessInfo[KratosMultiphysics.NL_ITERATION_NUMBER]
-            # This loop reads NON-CONVERGED assembled residuals that had been written into disk
             files_to_read_and_delete = glob('*.res.mm')
             for to_erase_file in files_to_read_and_delete:
                 non_converged_iteration_snapshot = KratosMultiphysics.Vector()
@@ -72,7 +67,7 @@ class PetrovGalerkinTrainingUtility(object):
                 snapshots_matrix.append(non_converged_iteration_snapshot)
             snapshots_matrix = np.array(snapshots_matrix).T
         else:
-            err_msg = "\'self.basis_strategy\' is not available. Select either Projected_System or Assembled_Residuals."
+            err_msg = "\'self.basis_strategy\' is not available. Select either Jacobian or Residuals."
             raise Exception(err_msg)
 
         np_snapshots_matrix = np.array(snapshots_matrix, copy=False)
