@@ -203,8 +203,6 @@ public:
         PetrovGalerkinSystemMatrixType Arom = ZeroMatrix(mNumberOfPetrovGalerkinRomModes, this->GetNumberOfROMModes());
         PetrovGalerkinSystemVectorType brom = ZeroVector(mNumberOfPetrovGalerkinRomModes);
         BuildROM(pScheme, rModelPart, Arom, brom);
-        KRATOS_WATCH(Arom)
-        KRATOS_WATCH(brom)
         SolveROM(rModelPart, Arom, brom, Dx);
 
 

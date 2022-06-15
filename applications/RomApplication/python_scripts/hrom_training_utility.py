@@ -23,7 +23,7 @@ class HRomTrainingUtility(object):
         settings.ValidateAndAssignDefaults(self.__GetHRomTrainingDefaultSettings())
 
         # Projection strategy (residual projection)
-        settings["projection_strategy"] = custom_settings["rom_settings"]["solving_strategy"] # To be consistent with the solving strategy
+        settings["projection_strategy"] = custom_settings["solving_strategy"] # To be consistent with the solving strategy
 
         # Create the HROM element selector
         element_selection_type = settings["element_selection_type"].GetString()
@@ -40,6 +40,7 @@ class HRomTrainingUtility(object):
         self.echo_level = settings["echo_level"].GetInt()
         self.rom_settings = custom_settings["rom_settings"]
         self.hrom_visualization_model_part = settings["create_hrom_visualization_model_part"].GetBool()
+        self.projection_strategy = settings["projection_strategy"].GetString()
 
     def AppendCurrentStepResiduals(self):
         # Get the computing model part from the solver implementing the problem physics
@@ -59,7 +60,9 @@ class HRomTrainingUtility(object):
         # Generate the matrix of residuals
         if self.echo_level > 0 : KratosMultiphysics.Logger.PrintInfo("HRomTrainingUtility","Generating matrix of residuals.")
         if (self.projection_strategy=="Galerkin"):
-                res_mat = self.__rom_residuals_utility.GetResiduals()
+                res_mat = self.__rom_residuals_utility.GetProjectedResidualsOntoPhi()
+        elif (self.projection_strategy=="Petrov-Galerkin"):
+                res_mat = self.__rom_residuals_utility.GetProjectedResidualsOntoPsi()
         else: 
             err_msg = "Projection strategy \'{}\' for hrom is not supported.".format(self.projection_strategy)
             raise Exception(err_msg)
