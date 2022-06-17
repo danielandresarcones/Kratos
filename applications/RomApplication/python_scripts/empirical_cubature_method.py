@@ -33,12 +33,13 @@ class EmpiricalCubatureMethod():
     Method for setting up the element selection
     input:  ResidualsBasis: numpy array containing a basis to the residuals projected
     """
-    def SetUp(self, ResidualsBasis, constrain_sum_of_weights=True):
-
+    def SetUp(self, ResidualsBasis, constrain_sum_of_weights=True, IND_POINTS_CANDIDATES = []):
+        
+        self.IND_POINTS_CANDIDATES = IND_POINTS_CANDIDATES
         self.W = np.ones(np.shape(ResidualsBasis)[0])
         self.G = ResidualsBasis.T
         if constrain_sum_of_weights:
-            self.G = np.vstack([ self.G , np.ones( np.shape(self.G)[1] )]  )
+            self.G = np.vstack([ self.G , np.ones( np.shape(self.G)[1] )/np.linalg.norm(self.W)]  )
         self.b = self.G @ self.W
 
 
@@ -49,7 +50,12 @@ class EmpiricalCubatureMethod():
         self.Gnorm = np.sqrt(sum(np.multiply(self.G, self.G), 0))
         M = np.shape(self.G)[1]
         normB = np.linalg.norm(self.b)
-        self.y = np.arange(0,M,1) # Set of candidate points (those whose associated column has low norm are removed)
+        #self.y = np.arange(0,M,1) # Set of candidate points (those whose associated column has low norm are removed)
+        self.yCOMPL = np.arange(0,M,1)
+        if len(self.IND_POINTS_CANDIDATES)!=0:
+            self.y = self.IND_POINTS_CANDIDATES 
+        else:
+            self.y = self.yCOMPL
         GnormNOONE = np.sqrt(sum(np.multiply(self.G[:-1,:], self.G[:-1,:]), 0))
         if self.Filter_tolerance > 0:
             TOL_REMOVE = self.Filter_tolerance * normB
@@ -61,6 +67,7 @@ class EmpiricalCubatureMethod():
         self.m = len(self.b) # Default number of points
         self.nerror = np.linalg.norm(self.r)/normB
         self.nerrorACTUAL = self.nerror
+        self.nerrorMIN = 1e10 
 
 
     def Run(self):
@@ -74,6 +81,9 @@ class EmpiricalCubatureMethod():
     def Calculate(self):
 
         k = 1 # number of iterations
+        ITER_MINIMUM = 0
+        NITERATIONS_NO_MORE_POINTS = 10
+        COMPLEMENTARY_ALREADY_ADDED = 0
         while self.nerrorACTUAL > self.ECM_tolerance and self.mPOS < self.m and len(self.y) != 0:
 
             #Step 1. Compute new point
@@ -103,6 +113,14 @@ class EmpiricalCubatureMethod():
                 H = self._MultiUpdateInverseHermitian(H, indexes_neg_weight)
                 alpha = H @ (self.G[:, self.z].T @ self.b)
                 alpha = alpha.reshape(len(alpha),1)
+            
+            if (ITER_MINIMUM > NITERATIONS_NO_MORE_POINTS and COMPLEMENTARY_ALREADY_ADDED ==0) or self.y.size==0:
+                print('--------------------------------------------------------------')
+                print('The algorithm cannot proceed with the current set of points')
+                print('We enlarge the set of candidates with the complementary set')
+                self.y = np.concatenate((self.y,self.yCOMPL))
+                ITER_MINIMUM = 0 
+                COMPLEMENTARY_ALREADY_ADDED = 1
 
             #Step 6 Update the residual
             if len(alpha)==1:
@@ -123,6 +141,12 @@ class EmpiricalCubatureMethod():
             else:
                 ERROR_GLO = np.c_[ ERROR_GLO , self.nerrorACTUAL]
                 NPOINTS = np.c_[ NPOINTS , np.size(self.z)]
+            
+            if  self.nerror >= self.nerrorMIN:
+                ITER_MINIMUM += 1 
+            else:
+                self.nerrorMIN = self.nerror
+                ITER_MINIMUM = 0 
 
             k = k+1
 
