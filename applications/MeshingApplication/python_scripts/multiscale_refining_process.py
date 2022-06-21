@@ -9,7 +9,7 @@ def Factory(settings, Model):
 
 class MultiscaleRefiningProcess(KratosMultiphysics.Process):
     def __init__(self, Model, settings ):
-
+        super().__init__()
         ## Settings string in json format
         default_parameters = KratosMultiphysics.Parameters("""
         {
@@ -43,7 +43,7 @@ class MultiscaleRefiningProcess(KratosMultiphysics.Process):
 
         # Overwrite the default settings with user-provided parameters
         self.settings = settings
-        self.settings.RecursivelyValidateAndAssignDefaults(default_parameters)
+        self.settings.ValidateAndAssignDefaults(default_parameters)
 
         self.model = Model
 
@@ -80,7 +80,10 @@ class MultiscaleRefiningProcess(KratosMultiphysics.Process):
 
         kratos_module_name = self.settings["refining_condition_parameters"]["kratos_module"].GetString()
         python_module_name = self.settings["refining_condition_parameters"]["python_module"].GetString()
-        full_module_name = kratos_module_name + "." + python_module_name
+        if kratos_module_name:
+            full_module_name = kratos_module_name + "." + python_module_name
+        else:
+            full_module_name = python_module_name
         python_module = __import__(full_module_name, fromlist=[python_module_name])
         self.settings["refining_condition_parameters"]["Parameters"]["model_part_name"].SetString(self.coarse_model_part_name)
         self.refining_condition_process = python_module.Factory(self.settings["refining_condition_parameters"], self.model)

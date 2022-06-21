@@ -47,6 +47,8 @@ class InitialPerturbationProcess(KM.Process):
             node = KM.Node(1, source_coordinates[0], source_coordinates[1], source_coordinates[2])
             # Construction of the process with one node
             self.perturbation_process = SW.ApplyPerturbationFunctionToScalar(self.model_part, node, variable, cpp_parameters)
+            self.source_coordinates = source_coordinates
+            self.distance_of_influence = settings["distance_of_influence"].GetDouble()
 
         elif settings["source_type"].GetString() == "model_part":
             # Construction of the process with a sub model part
@@ -56,9 +58,16 @@ class InitialPerturbationProcess(KM.Process):
         else:
             raise Exception("InitialPerturbationProcess: unknown source type")
 
-    def ExecuteInitialize(self):
+    def ExecuteBeforeSolutionLoop(self):
         self.perturbation_process.Execute()
         if self.variable_name == "HEIGHT":
             SW.ShallowWaterUtilities().ComputeFreeSurfaceElevation(self.model_part)
         elif self.variable_name == "FREE_SURFACE_ELEVATION":
             SW.ShallowWaterUtilities().ComputeHeightFromFreeSurface(self.model_part)
+        # local_coords = KM.Array3()
+        # tol = 1e-6
+        # for element in self.model_part.Elements:
+        #     vector = element.GetGeometry().Center() - self.source_coordinates
+        #     distance = vector.norm_2()
+        #     if distance < 10 * self.distance_of_influence or element.GetGeometry().IsInside(self.source_coordinates, local_coords, tol):
+        #         element.SetValue(KM.RESIDUAL_NORM, 0.1)

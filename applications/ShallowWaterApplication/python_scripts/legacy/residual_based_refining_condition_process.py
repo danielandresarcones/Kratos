@@ -10,7 +10,7 @@ def Factory(settings, Model):
 
 class ResidualBasedRefiningConditionProcess(KM.Process):
     def __init__(self, model, settings ):
-
+        super().__init__()
         ## Settings string in json format
         default_parameters = KM.Parameters("""
         {

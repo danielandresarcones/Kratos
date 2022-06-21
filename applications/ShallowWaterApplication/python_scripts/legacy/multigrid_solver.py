@@ -4,40 +4,29 @@ import KratosMultiphysics.ShallowWaterApplication as SW
 import KratosMultiphysics.MeshingApplication as MSH
 
 ## Import base class file
-from KratosMultiphysics.ShallowWaterApplication.eulerian_primitive_var_solver import EulerianPrimitiveVarSolver
+from KratosMultiphysics.ShallowWaterApplication.wave_solver import WaveSolver
 from KratosMultiphysics.MeshingApplication.multiscale_refining_process import MultiscaleRefiningProcess
 
 def CreateSolver(model, custom_settings):
     return MultigridSolver(model, custom_settings)
 
-class MultigridSolver(EulerianPrimitiveVarSolver):
+class MultigridSolver(WaveSolver):
 
     def __init__(self, model, settings):
-        settings = self._ValidateSettings(settings)
+        settings.ValidateAndAssignDefaults(self.GetDefaultParameters())
 
         self.model = model      # TODO: inherit from PythonSolver and use super
         self.settings = settings
         self.echo_level = self.settings["echo_level"].GetInt()
 
-        # There is only a single rank in OpenMP, we always print
-        self._is_printing_rank = True
-
         ## Set the element and condition names for the replace settings
-        ## These should be defined in derived classes
-        self.element_name = "EulerPrimVarElement"
-        self.condition_name = "LineCondition"
-        self.min_buffer_size = 2
+        self.element_name, self.condition_name, self.min_buffer_size = self._GetFormulationSettings()
 
         # Initialize the multigrid process. It creates the model part
         self.multigrid = MultiscaleRefiningProcess(model, settings["multigrid_settings"])
         self.main_model_part = self.multigrid.GetRefinedModelPart()
 
-        domain_size = self.settings["domain_size"].GetInt()
-        self.main_model_part.ProcessInfo.SetValue(KM.DOMAIN_SIZE, domain_size)
-
-        ## Construct the linear solver
-        import KratosMultiphysics.python_linear_solver_factory as linear_solver_factory
-        self.linear_solver = linear_solver_factory.ConstructSolver(self.settings["linear_solver_settings"])
+        self._SetProcessInfo()
 
     def ImportModelPart(self):
         if self.main_model_part.ProcessInfo[MSH.SUBSCALE_INDEX] == 0:
@@ -51,20 +40,26 @@ class MultigridSolver(EulerianPrimitiveVarSolver):
 
     def AdvanceInTime(self, current_time):
         divisions = 2**(self.GetComputingModelPart().GetValue(MSH.SUBSCALE_INDEX) * self.multigrid.number_of_divisions_at_subscale)
-        dt = self._ComputeDeltaTime() / divisions
-        new_time = current_time + dt
+        current_time += self._GetEstimateDeltaTimeUtility().Execute() / divisions
 
-        self.GetComputingModelPart().CloneTimeStep(new_time)
+        self.GetComputingModelPart().CloneTimeStep(current_time)
         self.GetComputingModelPart().ProcessInfo[KM.STEP] += 1
 
         self.multigrid.ExecuteInitializeSolutionStep()
 
-        KM.Logger.PrintInfo("::[Multigrid solver]::", "Subscale Index:", self.GetComputingModelPart().GetValue(MSH.SUBSCALE_INDEX))
-
-        return new_time
+        return current_time
 
     def GetComputingModelPart(self):
         return self.multigrid.GetRefinedModelPart()
+
+    def GetStepLabel(self):
+        if self.GetComputingModelPart().GetValue(MSH.SUBSCALE_INDEX) == 0:
+            return self.GetComputingModelPart().ProcessInfo[KM.STEP]
+        else:
+            level = self.GetComputingModelPart().GetValue(MSH.SUBSCALE_INDEX)
+            coarse_step = self.multigrid.GetCoarseModelPart().ProcessInfo[KM.STEP]
+            refined_step = self.GetComputingModelPart().ProcessInfo[KM.STEP]
+            return f'[{level}] {coarse_step}.{refined_step}'
 
     def InitializeSolutionStep(self):
         if self.GetComputingModelPart().NumberOfElements() != 0:
@@ -74,11 +69,11 @@ class MultigridSolver(EulerianPrimitiveVarSolver):
         if self.GetComputingModelPart().NumberOfElements() != 0:
             super().Predict()
 
-    # def SolveSolutionStep(self):
-    #     if self._TimeBufferIsInitialized():
-    #         # if self.GetComputingModelPart().NumberOfElements() != 0:
-    #         is_converged = self.solver.SolveSolutionStep()
-    #         return is_converged
+    def SolveSolutionStep(self):
+        if self._TimeBufferIsInitialized():
+            if self.GetComputingModelPart().NumberOfElements() != 0:
+                is_converged = self._GetSolutionStrategy().SolveSolutionStep()
+                return is_converged
 
     def FinalizeSolutionStep(self):
         if self.GetComputingModelPart().NumberOfElements() != 0:
@@ -86,3 +81,12 @@ class MultigridSolver(EulerianPrimitiveVarSolver):
 
     def Finalize(self):
         self.multigrid.ExecuteFinalize()
+
+    def GetDefaultParameters(self):
+        default_parameters = KM.Parameters("""
+        {
+            "multigrid_settings" : {}
+        }
+        """)
+        default_parameters.AddMissingParameters(super().GetDefaultParameters())
+        return default_parameters

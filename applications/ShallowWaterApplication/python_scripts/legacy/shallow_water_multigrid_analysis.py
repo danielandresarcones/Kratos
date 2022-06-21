@@ -28,27 +28,45 @@ class ShallowWaterMultigridAnalysis(ShallowWaterAnalysis):
         super().Initialize()
         if self.current_subscale < self.maximum_subgrids:
             self.sub_analysis.Initialize()
+            self.sub_analysis.SetInitialCondition()
 
     def RunSolutionLoop(self):
         while self.time < self.end_time:
             self.time = self._GetSolver().AdvanceInTime(self.time)
+            if self.current_subscale < self.maximum_subgrids:
+                self.sub_analysis.InitializeMultigridSolver()
             self.InitializeSolutionStep()
             self._GetSolver().Predict()
             self._GetSolver().SolveSolutionStep()
             if self.current_subscale < self.maximum_subgrids:
-                self.sub_analysis._GetSolver().GetComputingModelPart().ProcessInfo[KratosMultiphysics.STEP] = 0
+                self.sub_analysis._GetSolver().GetComputingModelPart().ProcessInfo[KM.STEP] = 0
                 self.sub_analysis.end_time = self.time
-                self.sub_analysis.InitializeMultigridSolver()
                 self.sub_analysis.RunSolutionLoop()
-                self.sub_analysis.Finalize()
+                self.sub_analysis.FinalizeMultigridSolver()
             self.FinalizeSolutionStep()
             self.OutputSolutionStep()
+
+    def Finalize(self):
+        super().Finalize()
+        if self.current_subscale < self.maximum_subgrids:
+            self.sub_analysis.Finalize()
+
+    def PrintAnalysisStageProgressInformation(self):
+        KM.Logger.PrintInfo(self._GetSimulationName(), "STEP: ", self._GetSolver().GetStepLabel())
+        KM.Logger.PrintInfo(self._GetSimulationName(), "TIME: ", self.time)
+
+    def SetInitialCondition(self):
+        self.InitializeMultigridSolver()
+        for process in self._list_of_processes:
+            process.ExecuteBeforeSolutionLoop()
+        self.FinalizeMultigridSolver()
 
     def InitializeMultigridSolver(self):
         self._GetSolver().multigrid.ExecuteInitialize()
         self._GetSolver().Initialize()
-        for process in self._GetListOfProcesses():
-            process.ExecuteBeforeSolutionLoop()
+
+    def FinalizeMultigridSolver(self):
+        self._GetSolver().multigrid.ExecuteFinalize()
 
     def _UpdateModelPartNamesInParameters(self):
         # Update the model part name in the processes parameters

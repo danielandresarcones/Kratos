@@ -697,6 +697,9 @@ void WaveElement<TNumNodes>::CalculateLocalSystem(MatrixType& rLeftHandSideMatri
 
     noalias(rLeftHandSideMatrix) = lhs;
     noalias(rRightHandSideVector) = rhs;
+
+    double residual = norm_1(rhs) / this->GetGeometry().Area();
+    this->SetValue(RESIDUAL_NORM, residual);
 }
 
 
