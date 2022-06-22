@@ -74,11 +74,9 @@ class HRomTrainingUtility(object):
         # Calculate the residuals basis and compute the HROM weights from it
         residual_basis = self.__CalculateResidualBasis()
         n_conditions = self.solver.GetComputingModelPart().NumberOfConditions()
-        n_elements_and_conditions = residual_basis.shape[0]
-        conditions_begin = n_elements_and_conditions-int(n_conditions)
-        conditions_list = np.arange(conditions_begin,n_elements_and_conditions,1)
         # self.hyper_reduction_element_selector.SetUp(residual_basis, IND_POINTS_CANDIDATES = conditions_list)
-        self.hyper_reduction_element_selector.SetUp(residual_basis)
+        self.hyper_reduction_element_selector.SetUp(residual_basis, number_of_conditions = n_conditions)
+        # self.hyper_reduction_element_selector.SetUp(residual_basis)
         self.hyper_reduction_element_selector.Run()
 
         # Save the HROM weights in the RomParameters.json
