@@ -399,7 +399,9 @@ public:
         ComplexVectorType modal_displacement;
         modal_displacement.resize(n_dofs, false);
         modal_displacement = ZeroVector( n_dofs );
-
+        ComplexVectorType modal_weights_vector;
+        modal_weights_vector.resize(n_modes, false);
+        modal_weights_vector = ZeroVector( n_modes );
         double modal_damping = 0.0;
 
         for( std::size_t i = 0; i < n_modes; ++i )
@@ -422,6 +424,8 @@ public:
             KRATOS_ERROR_IF( std::abs(factor) < std::numeric_limits<double>::epsilon() ) << "No valid modal weight" << std::endl;
             mode_weight = inner_prod( modal_vector, f ) / factor;
 
+            modal_weights_vector[i] = mode_weight;
+
             // compute the modal displacement as a superposition of modal_weight * eigenvector
             for( auto& node : r_model_part.Nodes() )
             {
@@ -443,7 +447,7 @@ public:
             }
         }
 
-        this->AssignVariables(modal_displacement);
+        this->AssignVariables(modal_displacement, modal_weights_vector);
 
         KRATOS_INFO_IF("HarmonicAnalysisStrategy", BaseType::GetEchoLevel() > 2 && rank == 0)
             << "Exiting SolveSolutionStep" << std::endl;
@@ -590,9 +594,11 @@ private:
     ///@{
 
     /// Assign the modal displacement to the dofs and the phase angle to the reaction
-    void AssignVariables(ComplexVectorType& rModalDisplacement, int step=0)
+    void AssignVariables(ComplexVectorType& rModalDisplacement, ComplexVectorType& rModalWeightsVector, int step=0)
     {
         auto& r_model_part = BaseType::GetModelPart();
+        auto& r_process_info = r_model_part.GetProcessInfo();
+
         for( auto& node : r_model_part.Nodes() )
         {
             ModelPart::NodeType::DofsContainerType& rNodeDofs = node.GetDofs();
@@ -623,6 +629,15 @@ private:
                 }
             }
         }
+
+        DenseVectorType modal_weights(rModalWeightsVector.size());
+
+        for( std::size_t i = 0; i < rModalWeightsVector.size(); i++)
+        {
+            modal_weights[i] = std::real(rModalWeightsVector(i));
+        }
+
+        r_process_info.SetValue(MODAL_WEIGHTS_VECTOR, modal_weights);
     }
 
     ///@}
