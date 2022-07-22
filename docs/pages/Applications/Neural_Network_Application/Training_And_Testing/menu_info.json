@@ -1,0 +1,11 @@
+{
+    "custom_entries" : [
+        "Overview.md",
+        "Preprocessing.md",
+        "Model_setup.md",
+        "Model_training.md",
+        "Postprocessing.md",
+        "Testing_and_validation.md",
+        "Hypertuning.md"
+    ]
+}

@@ -1,0 +1,16 @@
+{
+    "side_bar_name": "neural_network_application",
+    "landing_page": "General/Overview.md",
+    "additional_menu_options": {
+        "product": "Neural Network Application",
+        "title": "sidebar"
+    },
+    "custom_entries": [
+        "General",
+        "Neural_Network_Architecture_Concepts",
+        "Data_Generation",
+        "Training_And_Testing",
+        "Model_Use",
+        "Examples"
+    ]
+}
