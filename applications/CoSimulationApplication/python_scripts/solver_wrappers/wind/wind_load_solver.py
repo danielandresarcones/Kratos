@@ -69,6 +69,8 @@ class WindLoadSolver(MechanicalSolver):
         self.minimum_frequency = parameters["wind_model_parameters"]["minimum_frequency"].GetDouble()
         self.std_deviation_relation_resolution = parameters["wind_model_parameters"]["std_deviation_relation_resolution"].GetDouble()
         self.confidence_peak_velocity = parameters["wind_model_parameters"]["confidence_peak_velocity"].GetDouble()
+        self.incidence_angle = parameters["wind_model_parameters"]["incidence_angle"].GetDouble()*math.pi/180.0
+        self.ramp_up_time = parameters["wind_model_parameters"]["ramp_up_time"].GetDouble()
 
         self.wind_model = self.GetWindModelSND(self.wind_model_name, self.reference_height, self.nominal_line_height)
 
@@ -127,7 +129,9 @@ class WindLoadSolver(MechanicalSolver):
                 "minimum_frequency": 0.005,
                 "std_deviation_relation_resolution": 10,
                 "confidence_peak_velocity": 3,
-                "frequency_in_herz": false
+                "frequency_in_herz": false,
+                "incidence_angle": 90.0,
+                "ramp_up_time": 0.0
             },
             "output_parameters":{
                 "write_output_file": true,
@@ -168,6 +172,7 @@ class WindLoadSolver(MechanicalSolver):
         dt = self.ComputeDeltaTime()
         new_time = current_time + dt
         self.main_model_part.ProcessInfo[KratosMultiphysics.STEP] += 1
+        self.main_model_part.ProcessInfo[KratosMultiphysics.TIME] = current_time
 
         return new_time
 
@@ -214,9 +219,10 @@ class WindLoadSolver(MechanicalSolver):
     def SolveSolutionStep(self):
         wind_velocity = self.CalculateVelocityVector()
         nodes_list = [node for node in self.main_model_part.GetNodes()]
-        cable_velocity = [node.GetSolutionStepValue(KratosMultiphysics.VELOCITY_Z) for node in nodes_list]
+        cable_velocity = [math.sqrt((node.GetSolutionStepValue(KratosMultiphysics.VELOCITY_Z)*math.sin(self.incidence_angle))**2 +
+                          (node.GetSolutionStepValue(KratosMultiphysics.VELOCITY_X)*math.cos(self.incidence_angle))**2) for node in nodes_list]
         relative_velocity = np.subtract(wind_velocity,cable_velocity)
-        line_loads = [self.CalculateLoad(velocity) for velocity in relative_velocity]
+        line_loads = [-self.CalculateLoad(velocity) for velocity in relative_velocity]
         node_loads = []
         for inode in range(len(nodes_list)):
             if inode == 0:
@@ -231,7 +237,8 @@ class WindLoadSolver(MechanicalSolver):
 
 
         for node, load in zip(nodes_list, node_loads):
-            node.SetSolutionStepValue(KratosMultiphysics.StructuralMechanicsApplication.POINT_LOAD_Z, load)
+            node.SetSolutionStepValue(KratosMultiphysics.StructuralMechanicsApplication.POINT_LOAD_Z, load * math.sin(self.incidence_angle))
+            node.SetSolutionStepValue(KratosMultiphysics.StructuralMechanicsApplication.POINT_LOAD_X, load * math.cos(self.incidence_angle))
 
     def FinalizeSolutionStep(self):
         pass
@@ -281,14 +288,18 @@ class WindLoadSolver(MechanicalSolver):
     def CalculateVelocityVector(self):
 
         current_time = self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]
+        if current_time > self.ramp_up_time:
+            factor = 1.0
+        else:
+            factor = math.sin(math.pi/2.0*(current_time/self.ramp_up_time))
         
         if self.turbulent_wind:
             turbulent_velocity = self.CalculateTurbulentVelocityComponent(self.distances_matrix, current_time)
 
-            return np.add([self.design_velocity]*self.number_of_windpoints,turbulent_velocity)
+            return np.add([self.design_velocity*factor]*self.number_of_windpoints,turbulent_velocity)
         
         else:
-            return [self.design_velocity]*self.number_of_windpoints
+            return [self.design_velocity*factor]*self.number_of_windpoints
 
     def CalculateTurbulentVelocityComponent(self, distances_matrix, time):
 
@@ -323,10 +334,10 @@ class WindLoadSolver(MechanicalSolver):
             TODO: This function should estimate the design mean velocity for a given peak value according to a 
             distribution rule (e.g. 3-sigma rule). A sample of trial velocities is applied, the deviations are
             calculated and then an interpolation is performed to obtein the desired one.
-            Set to 125 km/h right now, to be changed in the future.
+            Set to 0.8 * peak velocity right now, to be changed in the future.
         '''
 
-        self.design_velocity = 125.0
+        self.design_velocity = 0.8 * self.peak_velocity
 
 
     def CalculateLoad(self, velocity):
